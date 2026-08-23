@@ -1,0 +1,35 @@
+# .github/workflows/deploy.yml
+# Triggered after the Docker image build completes on main.
+# SSHes into the Utility Pi, pulls the latest image from ghcr.io,
+# and restarts the starlink-tracker container.
+name: Deploy to Utility Pi
+
+on:
+  workflow_run:
+    workflows: ["Build and publish Docker image"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    name: SSH deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only deploy if the image build succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: 2222
+          script: |
+            set -e
+            cd ~/git/starlink-tracker
+            git pull origin main
+            docker compose pull
+            docker compose up -d
+            docker image prune -f --filter "label=org.opencontainers.image.source=https://github.com/jj358mhz/starlink-tracker" --filter "until=24h"
+            echo "Deploy complete: $(git rev-parse --short HEAD)"
