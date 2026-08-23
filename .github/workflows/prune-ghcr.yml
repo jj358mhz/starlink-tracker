@@ -1,0 +1,22 @@
+# Prune old untagged container versions from GHCR.
+# Keeps the last 10 untagged versions; never touches semver-tagged releases or 'latest'/'main'.
+name: Prune old GHCR images
+
+on:
+  schedule:
+    - cron: '0 6 * * 0'  # Weekly, Sundays 06:00 UTC
+  workflow_dispatch:      # Also allow manual run
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete old untagged container versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: starlink-tracker
+          package-type: container
+          min-versions-to-keep: 10
+          delete-only-untagged-versions: true
