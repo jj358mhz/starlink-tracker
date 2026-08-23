@@ -1,6 +1,6 @@
 services:
   starlink-tracker:
-    build: .
+    image: ghcr.io/jj358mhz/starlink-tracker:latest
     container_name: starlink-tracker
     restart: unless-stopped
     ports:
