@@ -9,3 +9,9 @@ services:
       - ./data:/data
     environment:
       - PYTHONUNBUFFERED=1
+    networks:
+      - auth-net
+
+networks:
+  auth-net:
+    external: true
