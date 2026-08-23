@@ -1,0 +1,11 @@
+services:
+  starlink-tracker:
+    build: .
+    container_name: starlink-tracker
+    restart: unless-stopped
+    ports:
+      - "8765:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      - PYTHONUNBUFFERED=1

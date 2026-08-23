@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Starlink Live Tracker</title>
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Cesium.js"></script>
+<link href="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<style>
+  html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; background: #000; font-family: system-ui, -apple-system, sans-serif; }
+  #cesiumContainer { position: absolute; top: 0; left: 0; right: 340px; bottom: 0; }
+  #sidebar {
+    position: absolute; top: 0; right: 0; bottom: 0; width: 340px;
+    background: #0a0a0a; color: #ddd; overflow-y: auto;
+    border-left: 1px solid #222; padding: 12px 14px; box-sizing: border-box;
+    font-size: 13px;
+  }
+  #sidebar h1 { font-size: 15px; margin: 0 0 4px 0; color: #0ff; }
+  #sidebar h2 { font-size: 13px; margin: 16px 0 6px 0; color: #0f0; border-bottom: 1px solid #222; padding-bottom: 4px; }
+  .info { color: #888; font-size: 11px; margin-bottom: 8px; font-family: monospace; }
+  .pass {
+    padding: 6px 8px; margin-bottom: 4px; background: #161616; border-radius: 4px;
+    border-left: 3px solid #0ff; cursor: pointer;
+  }
+  .pass:hover { background: #1e1e1e; }
+  .pass.great { border-left-color: #ff0; }
+  .pass.excellent { border-left-color: #f80; }
+  .pass-name { font-weight: 600; color: #eee; }
+  .pass-time { color: #aaa; font-size: 11px; }
+  .pass-details { color: #888; font-size: 11px; margin-top: 2px; font-family: monospace; }
+  #loading { color: #888; font-style: italic; }
+</style>
+</head>
+<body>
+<div id="cesiumContainer"></div>
+<div id="sidebar">
+  <h1>🛰️  Starlink Tracker</h1>
+  <div class="info" id="info">Loading…</div>
+
+  <h2>Visible Passes — Berkeley</h2>
+  <div class="info" id="passes-info">Loading…</div>
+  <div id="passes-list"><div id="loading">Computing passes (may take a few minutes on first load)…</div></div>
+</div>
+
+<script>
+  const viewer = new Cesium.Viewer('cesiumContainer', {
+    baseLayer: Cesium.ImageryLayer.fromProviderAsync(
+      Cesium.ArcGisMapServerImageryProvider.fromUrl(
+        'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
+      )
+    ),
+    baseLayerPicker: false,
+    geocoder: false,
+    homeButton: false,
+    sceneModePicker: false,
+    navigationHelpButton: false,
+    animation: false,
+    timeline: false,
+    fullscreenButton: false,
+  });
+  viewer.scene.globe.enableLighting = true;
+
+  const API_POS = `${window.location.origin}/positions`;
+  const API_PASS = `${window.location.origin}/passes`;
+  const points = new Map();
+  let observerEntity = null;
+
+  function addObserver(lat, lon) {
+    if (observerEntity) return;
+    observerEntity = viewer.entities.add({
+      name: 'Berkeley Observer',
+      position: Cesium.Cartesian3.fromDegrees(lon, lat, 0),
+      point: { pixelSize: 12, color: Cesium.Color.YELLOW, outlineColor: Cesium.Color.BLACK, outlineWidth: 2 },
+      label: {
+        text: '📍 Berkeley',
+        font: '12px sans-serif',
+        fillColor: Cesium.Color.YELLOW,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        outlineWidth: 2,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -14),
+      },
+    });
+  }
+
+  async function refreshPositions() {
+    try {
+      const res = await fetch(API_POS);
+      const json = await res.json();
+      const seen = new Set();
+      for (const s of json.satellites) {
+        seen.add(s.name);
+        const pos = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, s.alt_km * 1000);
+        let ent = points.get(s.name);
+        if (ent) {
+          ent.position = pos;
+        } else {
+          ent = viewer.entities.add({
+            name: s.name,
+            position: pos,
+            point: { pixelSize: 3, color: Cesium.Color.CYAN },
+          });
+          points.set(s.name, ent);
+        }
+      }
+      for (const [name, ent] of points) {
+        if (!seen.has(name)) { viewer.entities.remove(ent); points.delete(name); }
+      }
+      document.getElementById('info').textContent =
+        `${json.count} satellites • ${new Date().toLocaleTimeString()}`;
+    } catch (e) {
+      document.getElementById('info').textContent = 'Error: ' + e.message;
+    }
+  }
+
+  function fmtLocal(utc) {
+    const d = new Date(utc);
+    return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function compass(az) {
+    const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(az / 22.5) % 16];
+  }
+
+  async function refreshPasses() {
+    try {
+      const res = await fetch(API_PASS);
+      const json = await res.json();
+      addObserver(json.observer.lat, json.observer.lon);
+      document.getElementById('passes-info').textContent =
+        `Top ${json.count_returned} of ${json.count_total} visible passes (next 12h)`;
+      const list = document.getElementById('passes-list');
+      list.innerHTML = '';
+      for (const p of json.passes) {
+        const div = document.createElement('div');
+        let cls = 'pass';
+        if (p.peak_elevation_deg >= 70) cls += ' excellent';
+        else if (p.peak_elevation_deg >= 50) cls += ' great';
+        div.className = cls;
+        div.innerHTML =
+          `<div class="pass-name">${p.name}</div>` +
+          `<div class="pass-time">${fmtLocal(p.peak_utc)} local</div>` +
+          `<div class="pass-details">peak ${p.peak_elevation_deg}° ${compass(p.peak_azimuth_deg)} • ${p.duration_s}s</div>`;
+        div.onclick = () => {
+          const ent = points.get(p.name);
+          if (ent) viewer.flyTo(ent, { duration: 1.5 });
+        };
+        list.appendChild(div);
+      }
+    } catch (e) {
+      document.getElementById('passes-info').textContent = 'Passes error: ' + e.message;
+    }
+  }
+
+  refreshPositions();
+  refreshPasses();
+  setInterval(refreshPositions, 3000);
+  setInterval(refreshPasses, 5 * 60 * 1000);  // matches server cache
+</script>
+</body>
+</html>
