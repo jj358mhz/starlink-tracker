@@ -1,22 +1,31 @@
 # Prune old untagged container versions from GHCR.
-# Keeps the last 10 untagged versions; never touches semver-tagged releases or 'latest'/'main'.
+# Keeps the last 10 untagged images; never touches tagged images (semver, 'latest', 'main', 'sha-*').
+# Uses ghcr-cleanup-action because it understands multi-arch manifest lists: the per-platform
+# and attestation manifests of a tagged image show up as "untagged" in GHCR, and deleting them
+# would break pulls of that tag.
+# Runs after each successful image publish (not on a schedule, which GitHub disables after 60 days of inactivity).
 name: Prune old GHCR images
 
 on:
-  schedule:
-    - cron: '0 6 * * 0'  # Weekly, Sundays 06:00 UTC
+  workflow_run:
+    workflows: ['Build and publish Docker image']
+    types: [completed]
   workflow_dispatch:      # Also allow manual run
 
 jobs:
   prune:
+    # Only prune after a successful push build; PR builds don't publish images
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     permissions:
       packages: write
     steps:
-      - name: Delete old untagged container versions
-        uses: actions/delete-package-versions@v5
+      - name: Delete old untagged container images
+        uses: dataaxiom/ghcr-cleanup-action@v1
         with:
-          package-name: starlink-tracker
-          package-type: container
-          min-versions-to-keep: 10
-          delete-only-untagged-versions: true
+          package: starlink-tracker
+          keep-n-untagged: 10
+          validate: true
